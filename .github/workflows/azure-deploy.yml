@@ -14,61 +14,109 @@ env:
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
 
+    steps:
+      # -------------------------------------------------------
+      # 1. Checkout source code
+      # -------------------------------------------------------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------
+      # 2. Login to Azure
+      # -------------------------------------------------------
       - name: Log in to Azure
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      # -------------------------------------------------------
+      # 3. Login to Azure Container Registry
+      # -------------------------------------------------------
       - name: Log in to Azure Container Registry (ACR)
-        uses: azure/docker-login@v1
+        uses: azure/docker-login@v2
         with:
           login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
+      # -------------------------------------------------------
+      # 4. Build Backend Docker Image
+      # -------------------------------------------------------
       - name: Build and Push Backend Image
         run: |
-          docker build -f src/Backend/Dockerfile -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }} src/Backend
-          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }}
+          docker build \
+            -f src/Backend/Dockerfile \
+            -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }} \
+            src/Backend
 
+          docker push \
+            ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }}
+
+      # -------------------------------------------------------
+      # 5. Build Frontend Docker Image
+      # -------------------------------------------------------
       - name: Build and Push Frontend Image
         run: |
-          docker build -f src/Frontend/Dockerfile -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }} src/Frontend
-          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }}
+          docker build \
+            -f src/Frontend/Dockerfile \
+            -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }} \
+            src/Frontend
 
-      - name: Setup .NET Core (for EF Migrations)
-        uses: actions/setup-dotnet@v3
+          docker push \
+            ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }}
+
+      # -------------------------------------------------------
+      # 6. Install .NET 9 for EF Core migrations
+      # -------------------------------------------------------
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x' # Update if using a different version
+          dotnet-version: '9.0.x'
 
-      - name: Run EF Core Migrations
+      # -------------------------------------------------------
+      # 7. Install EF Core CLI
+      # -------------------------------------------------------
+      - name: Install EF Core Tools
         run: |
           dotnet tool install --global dotnet-ef
-          cd src/Backend/Ams.Api
-          dotnet ef database update --connection "${{ secrets.SQL_CONNECTION_STRING }}"
 
+      # -------------------------------------------------------
+      # 8. Run EF Core Database Migrations
+      # -------------------------------------------------------
+      - name: Run EF Core Migrations
+        run: |
+          dotnet ef database update \
+            --project src/Backend/Ams.Infrastructure \
+            --startup-project src/Backend/Ams.Api \
+            --connection "${{ secrets.SQL_CONNECTION_STRING }}"
+
+      # -------------------------------------------------------
+      # 9. Deploy Backend Container
+      # -------------------------------------------------------
       - name: Deploy Backend to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
-          appSourcePath: ${{ github.workspace }}/src/Backend
-          acrName: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          acrName: federationassocationapplication
           acrUsername: ${{ secrets.REGISTRY_USERNAME }}
           acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
+
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME_BACKEND }}
           resourceGroup: ${{ env.AZURE_GROUP_NAME }}
+
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }}
 
+      # -------------------------------------------------------
+      # 10. Deploy Frontend Container
+      # -------------------------------------------------------
       - name: Deploy Frontend to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
-          appSourcePath: ${{ github.workspace }}/src/Frontend
-          acrName: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          acrName: federationassocationapplication
           acrUsername: ${{ secrets.REGISTRY_USERNAME }}
           acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
+
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME_FRONTEND }}
           resourceGroup: ${{ env.AZURE_GROUP_NAME }}
+
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }}
