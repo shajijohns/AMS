@@ -7,10 +7,14 @@ on:
   workflow_dispatch:
 
 env:
+  # Azure Container Apps
   AZURE_CONTAINER_APP_NAME_BACKEND: 'federationapps-api'
   AZURE_CONTAINER_APP_NAME_FRONTEND: 'federationapps-web'
+
+  # Azure Resource Group
   AZURE_GROUP_NAME: 'BBTGrp'
 
+  # Existing ACR image repositories
   BACKEND_IMAGE_NAME: 'memberregisteration-backend'
   FRONTEND_IMAGE_NAME: 'memberregisteration-frontend'
 
@@ -20,23 +24,25 @@ jobs:
 
     steps:
 
-      # -------------------------------------------------------
-      # 1. Checkout Repository
-      # -------------------------------------------------------
+      # =======================================================
+      # 1. CHECKOUT REPOSITORY
+      # =======================================================
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # -------------------------------------------------------
-      # 2. Login to Azure
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 2. LOGIN TO AZURE
+      # =======================================================
       - name: Log in to Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # -------------------------------------------------------
-      # 3. Login to Azure Container Registry
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 3. LOGIN TO AZURE CONTAINER REGISTRY
+      # =======================================================
       - name: Log in to Azure Container Registry
         uses: azure/docker-login@v2
         with:
@@ -44,9 +50,10 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      # -------------------------------------------------------
-      # 4. Build Backend Image
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 4. BUILD BACKEND DOCKER IMAGE
+      # =======================================================
       - name: Build Backend Image
         run: |
           docker build \
@@ -54,17 +61,19 @@ jobs:
             -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }} \
             src/Backend
 
-      # -------------------------------------------------------
-      # 5. Push Backend Image
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 5. PUSH BACKEND IMAGE TO ACR
+      # =======================================================
       - name: Push Backend Image
         run: |
           docker push \
             ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
 
-      # -------------------------------------------------------
-      # 6. Build Frontend Image
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 6. BUILD FRONTEND DOCKER IMAGE
+      # =======================================================
       - name: Build Frontend Image
         run: |
           docker build \
@@ -72,61 +81,104 @@ jobs:
             -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }} \
             src/Frontend
 
-      # -------------------------------------------------------
-      # 7. Push Frontend Image
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 7. PUSH FRONTEND IMAGE TO ACR
+      # =======================================================
       - name: Push Frontend Image
         run: |
           docker push \
             ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
 
-      # -------------------------------------------------------
-      # 8. Setup .NET 9
-      # -------------------------------------------------------
-      - name: Setup .NET
+
+      # =======================================================
+      # 8. SETUP .NET 9
+      # =======================================================
+      - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
 
-      # -------------------------------------------------------
-      # 9. Install EF Core CLI
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 9. RESTORE NUGET PACKAGES
+      #
+      # Required because GitHub runner starts clean.
+      # This generates project.assets.json required by EF Core.
+      # =======================================================
+      - name: Restore Backend NuGet Packages
+        run: |
+          dotnet restore src/Backend/Ams.Api/Ams.Api.csproj
+          dotnet restore src/Backend/Ams.Infrastructure/Ams.Infrastructure.csproj
+
+
+      # =======================================================
+      # 10. BUILD BACKEND
+      #
+      # Verifies that the .NET projects compile before EF
+      # attempts to execute migrations.
+      # =======================================================
+      - name: Build Backend
+        run: |
+          dotnet build src/Backend/Ams.Api/Ams.Api.csproj \
+            --configuration Release \
+            --no-restore
+
+
+      # =======================================================
+      # 11. INSTALL ENTITY FRAMEWORK CORE CLI
+      # =======================================================
       - name: Install EF Core Tools
         run: |
           dotnet tool install --global dotnet-ef
 
-      # -------------------------------------------------------
-      # 10. Run EF Core Migrations
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 12. RUN ENTITY FRAMEWORK DATABASE MIGRATIONS
+      #
+      # Migration project:
+      #   Ams.Infrastructure
+      #
+      # Startup project:
+      #   Ams.Api
+      #
+      # Connection string comes securely from GitHub Secrets.
+      # =======================================================
       - name: Run EF Core Migrations
         run: |
           dotnet ef database update \
-            --project src/Backend/Ams.Infrastructure \
-            --startup-project src/Backend/Ams.Api \
+            --project src/Backend/Ams.Infrastructure/Ams.Infrastructure.csproj \
+            --startup-project src/Backend/Ams.Api/Ams.Api.csproj \
             --connection "${{ secrets.SQL_CONNECTION_STRING }}"
 
-      # -------------------------------------------------------
-      # 11. Deploy Backend
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 13. DEPLOY BACKEND TO AZURE CONTAINER APPS
+      # =======================================================
       - name: Deploy Backend to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
           acrName: federationassocationapplication
           acrUsername: ${{ secrets.REGISTRY_USERNAME }}
           acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
+
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME_BACKEND }}
           resourceGroup: ${{ env.AZURE_GROUP_NAME }}
+
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
 
-      # -------------------------------------------------------
-      # 12. Deploy Frontend
-      # -------------------------------------------------------
+
+      # =======================================================
+      # 14. DEPLOY FRONTEND TO AZURE CONTAINER APPS
+      # =======================================================
       - name: Deploy Frontend to Azure Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
           acrName: federationassocationapplication
           acrUsername: ${{ secrets.REGISTRY_USERNAME }}
           acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
+
           containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME_FRONTEND }}
           resourceGroup: ${{ env.AZURE_GROUP_NAME }}
+
           imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
