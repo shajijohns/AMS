@@ -1,0 +1,74 @@
+name: Build and Deploy to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AZURE_CONTAINER_APP_NAME_BACKEND: 'associationportal-backend'
+  AZURE_CONTAINER_APP_NAME_FRONTEND: 'associationportal-frontend'
+  AZURE_GROUP_NAME: 'AssociationPortal-RG'
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to Azure Container Registry (ACR)
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and Push Backend Image
+        run: |
+          docker build -f src/Backend/Dockerfile -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }} src/Backend
+          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }}
+
+      - name: Build and Push Frontend Image
+        run: |
+          docker build -f src/Frontend/Dockerfile -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }} src/Frontend
+          docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }}
+
+      - name: Setup .NET Core (for EF Migrations)
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x' # Update if using a different version
+
+      - name: Run EF Core Migrations
+        run: |
+          dotnet tool install --global dotnet-ef
+          cd src/Backend/Ams.Api
+          dotnet ef database update --connection "${{ secrets.SQL_CONNECTION_STRING }}"
+
+      - name: Deploy Backend to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          appSourcePath: ${{ github.workspace }}/src/Backend
+          acrName: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          acrUsername: ${{ secrets.REGISTRY_USERNAME }}
+          acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
+          containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME_BACKEND }}
+          resourceGroup: ${{ env.AZURE_GROUP_NAME }}
+          imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-backend:${{ github.sha }}
+
+      - name: Deploy Frontend to Azure Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          appSourcePath: ${{ github.workspace }}/src/Frontend
+          acrName: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          acrUsername: ${{ secrets.REGISTRY_USERNAME }}
+          acrPassword: ${{ secrets.REGISTRY_PASSWORD }}
+          containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME_FRONTEND }}
+          resourceGroup: ${{ env.AZURE_GROUP_NAME }}
+          imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/associationportal-frontend:${{ github.sha }}

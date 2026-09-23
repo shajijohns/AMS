@@ -1,0 +1,46 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build && echo http://localhost:5173/ && echo http://localhost:5173/admin/requests",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@hookform/resolvers": "^5.9.1",
+    "@microsoft/signalr": "^10.0.11",
+    "@mui/icons-material": "^9.4.0",
+    "@mui/material": "^9.4.0",
+    "@types/d3-scale": "^4.0.9",
+    "countries-list": "^3.4.1",
+    "d3-scale": "^4.0.2",
+    "leaflet": "^1.9.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-hook-form": "^7.87.0",
+    "react-leaflet": "^5.0.0",
+    "react-quill-new": "^3.8.3",
+    "react-router-dom": "^7.18.3",
+    "react-signature-canvas": "^1.1.0-alpha.2",
+    "react-simple-maps": "^5.0.5",
+    "recharts": "^3.10.1",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/react-signature-canvas": "^1.0.7",
+    "@types/react-simple-maps": "^3.0.6",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}

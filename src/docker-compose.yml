@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile.dev
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    ports:
+      - "5200:8080"
+    volumes:
+      - ./logs:/app/logs
+      - ./keys:/app/keys
+    extra_hosts:
+      - "SJ-777:host-gateway"
+    develop:
+      watch:
+        - action: sync
+          path: ./Backend
+          target: /app
+          ignore:
+            - bin/
+            - obj/
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      - API_URL=http://backend:8080
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    develop:
+      watch:
+        - action: sync
+          path: ./Frontend
+          target: /app
+          ignore:
+            - node_modules/

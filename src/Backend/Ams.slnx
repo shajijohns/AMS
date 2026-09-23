@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Ams.Api/Ams.Api.csproj" />
+  <Project Path="Ams.Domain/Ams.Domain.csproj" />
+  <Project Path="Ams.Infrastructure/Ams.Infrastructure.csproj" />
+</Solution>
