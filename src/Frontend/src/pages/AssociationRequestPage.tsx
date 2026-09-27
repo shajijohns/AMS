@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, Controller, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { 
@@ -78,7 +78,10 @@ const pastBearerSchema = z.object({
 });
 
 const boardSchema = z.object({
-  currentPresident: repSchema,
+  chairman: repSchema,
+  secretary: repSchema,
+  viceChairman: repSchema,
+  boardMembers: z.array(repSchema),
   pastPresident: pastBearerSchema,
   pastSecretary: pastBearerSchema,
   pastTreasurer: pastBearerSchema
@@ -91,7 +94,7 @@ const fullSchema = z.object({
   board: boardSchema
 });
 
-type FormData = z.infer<typeof fullSchema>;
+type ApplicationFormData = z.infer<typeof fullSchema>;
 
 const steps = ['Organization Details', 'Executive Committee', 'Board & Documents'];
 
@@ -113,7 +116,10 @@ const emptyFormState = {
     committeeMember5: { name: '', telephone: '', email: '', signature: '' },
   },
   board: {
-    currentPresident: { name: '', street: '', city: '', state: '', zip: '', telephoneAndEmail: '' },
+    chairman: { name: '', street: '', city: '', state: '', zip: '', telephoneAndEmail: '' },
+    secretary: { name: '', street: '', city: '', state: '', zip: '', telephoneAndEmail: '' },
+    viceChairman: { name: '', street: '', city: '', state: '', zip: '', telephoneAndEmail: '' },
+    boardMembers: [{ name: '', street: '', city: '', state: '', zip: '', telephoneAndEmail: '' }],
     pastPresident: { name: '', telephone: '', email: '' },
     pastSecretary: { name: '', telephone: '', email: '' },
     pastTreasurer: { name: '', telephone: '', email: '' }
@@ -236,11 +242,16 @@ export const AssociationRequestPage: React.FC = () => {
     return emptyFormState;
   }
 
-  const { control, handleSubmit, trigger, watch, reset, getValues, setValue } = useForm<FormData>({
+  const { control, handleSubmit, trigger, watch, reset, getValues, setValue } = useForm<ApplicationFormData>({
     resolver: zodResolver(fullSchema),
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: getSavedDraft()
+    defaultValues: getSavedDraft() as any
+  });
+
+  const { fields: boardMemberFields, append: appendBoardMember } = useFieldArray({
+    control,
+    name: "board.boardMembers"
   });
 
   useEffect(() => {
@@ -262,7 +273,7 @@ export const AssociationRequestPage: React.FC = () => {
 
   const handleClose = () => navigate('/');
   
-  const buildPayload = (data: FormData, isDraft: boolean) => {
+  const buildPayload = (data: ApplicationFormData, isDraft: boolean) => {
     return {
       IsDraft: isDraft,
       ParentTenantId: parentTenant?.id,
@@ -298,7 +309,10 @@ export const AssociationRequestPage: React.FC = () => {
       },
       
       BoardOfDirectors: {
-        CurrentPresident: data.board.currentPresident,
+        Chairman: data.board.chairman,
+        Secretary: data.board.secretary,
+        ViceChairman: data.board.viceChairman,
+        BoardMembers: data.board.boardMembers,
         PastPresident: data.board.pastPresident,
         PastSecretary: data.board.pastSecretary,
         PastTreasurer: data.board.pastTreasurer
@@ -308,7 +322,7 @@ export const AssociationRequestPage: React.FC = () => {
     };
   };
 
-  const saveToDatabase = async (data: FormData, isDraft: boolean) => {
+  const saveToDatabase = async (data: ApplicationFormData, isDraft: boolean) => {
     const payload = buildPayload(data, isDraft);
     const draftId = localStorage.getItem('associationDraftDbId');
     const url = draftId 
@@ -368,7 +382,7 @@ export const AssociationRequestPage: React.FC = () => {
 
   const handleBack = () => setActiveStep((prev) => prev - 1);
 
-  const onSubmit = async (data: FormData) => {
+  const onSubmit = async (data: ApplicationFormData) => {
     try {
       setError(null);
       await saveToDatabase(data, false);
@@ -777,10 +791,24 @@ export const AssociationRequestPage: React.FC = () => {
           <Box>
             <Typography variant="h6" color="primary" gutterBottom>List of Board of Directors and Documents</Typography>
             <Alert severity="info" sx={{ mb: 3 }}>
-              Please provide details for the Current President, Past Office Bearers, and any Supporting Documents.
+              Please provide details for the Board of Directors, Past Office Bearers, and any Supporting Documents.
             </Alert>
             
-            {renderRepresentative("board.currentPresident", "Current President - Board of Directors")}
+            {renderRepresentative("board.chairman", "Chairman")}
+            {renderRepresentative("board.secretary", "Secretary")}
+            {renderRepresentative("board.viceChairman", "Vice Chairman")}
+            
+            {boardMemberFields.map((field, index) => (
+               <Box key={field.id}>
+                 {renderRepresentative(`board.boardMembers.${index}`, `Board Member ${index + 1}`)}
+               </Box>
+            ))}
+            
+            {boardMemberFields.length < 10 && (
+               <Button variant="outlined" color="primary" onClick={() => appendBoardMember({ name: '', street: '', city: '', state: '', zip: '', telephoneAndEmail: '' })} sx={{ mb: 3 }}>
+                 + Add More Board Member
+               </Button>
+            )}
             
             <Typography variant="h6" color="primary" gutterBottom sx={{ mt: 4, mb: 3 }}>Last Office Bearers</Typography>
             {renderPastBearer("board.pastPresident", "Past President")}
