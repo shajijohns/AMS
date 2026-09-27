@@ -7,9 +7,10 @@ import {
   Box, Button, Container, TextField, Typography, Paper, 
   Stepper, Step, StepLabel, Grid, Divider, Alert,
   InputAdornment, MenuItem, FormControl, InputLabel, Select, Autocomplete,
-  Snackbar
+  Snackbar, Dialog, DialogTitle, DialogContent, IconButton
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloseIcon from '@mui/icons-material/Close';
 import { SignaturePad } from '../components/SignaturePad';
 import { usStates, flatCountries } from '../utils/geoData';
 
@@ -134,12 +135,12 @@ export const AssociationRequestPage: React.FC = () => {
 
   const [uploadedDocs, setUploadedDocs] = useState<{ name: string; type: string; path: string }[]>([]);
   const [docType, setDocType] = useState('Registration Certificate');
-  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [viewFileUrl, setViewFileUrl] = useState<string | null>(null);
 
   const handleFileUpload = async () => {
-    if (selectedFiles && docType) {
-      const filesArray = Array.from(selectedFiles);
-      for (const file of filesArray) {
+    if (selectedFiles.length > 0 && docType) {
+      for (const file of selectedFiles) {
         const formData = new window.FormData();
         formData.append('file', file);
         try {
@@ -158,7 +159,7 @@ export const AssociationRequestPage: React.FC = () => {
           alert(`Network error uploading ${file.name}`);
         }
       }
-      setSelectedFiles(null);
+      setSelectedFiles([]);
     }
   };
 
@@ -254,7 +255,7 @@ export const AssociationRequestPage: React.FC = () => {
       localStorage.removeItem('associationDraft');
       reset(emptyFormState);
       setUploadedDocs([]);
-      setSelectedFiles(null);
+      setSelectedFiles([]);
       setActiveStep(0);
     }
   };
@@ -344,7 +345,7 @@ export const AssociationRequestPage: React.FC = () => {
       alert("Draft saved to database successfully!");
       reset(emptyFormState);
       setUploadedDocs([]);
-      setSelectedFiles(null);
+      setSelectedFiles([]);
       setActiveStep(0);
       navigate('/');
     } catch (err: any) {
@@ -375,7 +376,7 @@ export const AssociationRequestPage: React.FC = () => {
       localStorage.removeItem('associationDraftDbId');
       reset(emptyFormState);
       setUploadedDocs([]);
-      setSelectedFiles(null);
+      setSelectedFiles([]);
       setActiveStep(0);
       setSubmitted(true);
     } catch (err: any) {
@@ -795,12 +796,15 @@ export const AssociationRequestPage: React.FC = () => {
                     <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1, border: '1px solid', borderColor: 'divider' }}>
                       <Typography variant="subtitle2" noWrap title={doc.name}>{doc.name}</Typography>
                       <Typography variant="body2" color="text.secondary">{doc.type}</Typography>
-                      <Button size="small" color="error" onClick={async () => {
-                        try {
-                          await fetch(`/api/public/association-requests/upload/${doc.path}`, { method: 'DELETE' });
-                        } catch(e) {}
-                        setUploadedDocs(docs => docs.filter((_, i) => i !== idx));
-                      }} sx={{ alignSelf: 'flex-start' }}>Remove</Button>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button size="small" variant="outlined" onClick={() => setViewFileUrl(`/api/public/association-requests/document/${doc.path}`)}>View</Button>
+                        <Button size="small" color="error" onClick={async () => {
+                          try {
+                            await fetch(`/api/public/association-requests/upload/${doc.path}`, { method: 'DELETE' });
+                          } catch(e) {}
+                          setUploadedDocs(docs => docs.filter((_, i) => i !== idx));
+                        }} sx={{ alignSelf: 'flex-start' }}>Remove</Button>
+                      </Box>
                     </Paper>
                   </Grid>
                 ))}
@@ -823,21 +827,74 @@ export const AssociationRequestPage: React.FC = () => {
               </FormControl>
               <Button type="button" variant="outlined" component="label">
                 Select Files
-                <input type="file" hidden multiple onChange={(e) => setSelectedFiles(e.target.files)} />
+                <input type="file" hidden multiple accept=".pdf,.doc,.docx,.xls,.xlsx" onChange={(e) => {
+                  if (e.target.files) {
+                    const newFiles = Array.from(e.target.files);
+                    const allowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+                    
+                    const validFiles = newFiles.filter(f => {
+                      const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+                      return allowedExtensions.includes(ext);
+                    });
+
+                    const existingNames = new Set([
+                      ...selectedFiles.map(f => f.name),
+                      ...uploadedDocs.map(d => d.name)
+                    ]);
+                    
+                    const filteredNewFiles = validFiles.filter(f => !existingNames.has(f.name));
+                    
+                    let errorMessage = "";
+                    if (validFiles.length < newFiles.length) {
+                      errorMessage += "Only PDF, Word, and Excel files are allowed. ";
+                    }
+                    if (filteredNewFiles.length < validFiles.length) {
+                      errorMessage += "Duplicate files were ignored.";
+                    }
+                    
+                    if (errorMessage) {
+                      setError(errorMessage.trim());
+                      setSnackbarOpen(true);
+                    }
+                    
+                    if (filteredNewFiles.length > 0) {
+                      setSelectedFiles(prev => [...prev, ...filteredNewFiles]);
+                    }
+                    
+                    e.target.value = '';
+                  }
+                }} />
               </Button>
               <Button 
                 type="button"
                 variant="contained" 
                 onClick={handleFileUpload}
-                disabled={!selectedFiles || selectedFiles.length === 0}
+                disabled={selectedFiles.length === 0}
               >
                 Upload
               </Button>
             </Box>
-            {selectedFiles && selectedFiles.length > 0 && (
-              <Typography variant="body2" sx={{ mb: 3 }}>
-                {selectedFiles.length} file(s) selected
-              </Typography>
+            {selectedFiles.length > 0 && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>Selected Files:</Typography>
+                <Grid container spacing={1}>
+                  {selectedFiles.map((file, idx) => (
+                    <Grid size={{ xs: 12, sm: 6, md: 4 }} key={idx}>
+                      <Paper sx={{ p: 1, px: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid', borderColor: 'divider', bgcolor: 'background.default' }}>
+                        <Typography variant="body2" noWrap sx={{ flex: 1, mr: 2 }} title={file.name}>{file.name}</Typography>
+                        <Box sx={{ flexShrink: 0 }}>
+                          <Button size="small" color="primary" onClick={() => setViewFileUrl(URL.createObjectURL(file))} sx={{ mr: 1 }}>
+                            View
+                          </Button>
+                          <Button size="small" color="error" onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))}>
+                            Remove
+                          </Button>
+                        </Box>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Box>
             )}
           </Box>
           )}
@@ -864,6 +921,18 @@ export const AssociationRequestPage: React.FC = () => {
             </Box>
           </Box>
         </form>
+
+        <Dialog open={!!viewFileUrl} onClose={() => setViewFileUrl(null)} maxWidth="lg" fullWidth>
+          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2 }}>
+            <Typography variant="h6">View Document</Typography>
+            <IconButton onClick={() => setViewFileUrl(null)} edge="end"><CloseIcon /></IconButton>
+          </DialogTitle>
+          <DialogContent dividers sx={{ height: '80vh', p: 0 }}>
+            {viewFileUrl && (
+              <iframe src={viewFileUrl} width="100%" height="100%" style={{ border: 'none' }} title="Document Viewer" />
+            )}
+          </DialogContent>
+        </Dialog>
       </Paper>
     </Container>
   );

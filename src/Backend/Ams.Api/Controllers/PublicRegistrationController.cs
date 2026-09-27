@@ -80,7 +80,7 @@ public class PublicRegistrationController : ControllerBase
                 }
             }
 
-            await SendConfirmationEmailAsync(dto.ContactEmail, dto.AssociationName);
+            await SendConfirmationEmailAsync(dto);
 
             await transaction.CommitAsync();
             return Ok(new { Message = "Request submitted successfully. You will receive an email shortly.", RequestId = request.Id, TenantId = request.TenantUniqueId });
@@ -118,7 +118,7 @@ public class PublicRegistrationController : ControllerBase
         {
             await _context.SaveChangesAsync();
 
-            await SendConfirmationEmailAsync(dto.ContactEmail, dto.AssociationName);
+            await SendConfirmationEmailAsync(dto);
 
             await transaction.CommitAsync();
             return Ok(new { Message = "Request submitted successfully. You will receive an email shortly.", RequestId = request.Id, TenantId = request.TenantUniqueId });
@@ -130,7 +130,7 @@ public class PublicRegistrationController : ControllerBase
         }
     }
 
-    private async Task SendConfirmationEmailAsync(string contactEmail, string associationName)
+    private async Task SendConfirmationEmailAsync(AssociationRequestDto dto)
     {
         var connectionString = _configuration["AzureEmail:ConnectionString"];
         var senderAddress = _configuration["AzureEmail:SenderAddress"];
@@ -141,14 +141,96 @@ public class PublicRegistrationController : ControllerBase
             throw new Exception("Email configuration is missing.");
         }
 
-        var emailClient = new EmailClient(connectionString);
-        var content = new EmailContent("Registration Received")
+        var htmlBuilder = new System.Text.StringBuilder();
+        htmlBuilder.Append($@"
+<div style='font-family: Arial, sans-serif; color: #333; max-width: 800px; margin: 0 auto; border: 1px solid #eaeaea; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'>
+    <div style='background-color: #2b3a55; color: #fff; padding: 20px; text-align: center;'>
+        <h2 style='margin: 0;'>Application for Membership</h2>
+        <p style='margin: 5px 0 0;'>New Registration Request: {dto.AssociationName}</p>
+    </div>
+    <div style='padding: 30px; background-color: #fcfcfc;'>
+        <p style='font-size: 16px; margin-top: 0;'>Hello,</p>
+        <p style='font-size: 16px;'>Your registration request for <b>{dto.AssociationName}</b> has been successfully received and is currently under review.</p>
+        
+        <h3 style='border-bottom: 2px solid #2b3a55; padding-bottom: 5px; color: #2b3a55;'>Organization Details</h3>
+        <table style='width: 100%; border-collapse: collapse; margin-bottom: 20px;'>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd; width: 40%;'><b>Name</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.AssociationName}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Address</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.Address}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>City, State, Zip</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.City}, {dto.State} {dto.Zip}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Country</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.Country}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Telephone</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.Telephone}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Web Address</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.WebAddress}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Contact Email</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.ContactEmail}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Year Formed</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.YearFormed}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Paid Members</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.NumberOfPaidMembers}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>State Registration</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{(dto.DateOfStateRegistration?.ToString("MM/dd/yyyy") ?? "N/A")}</td></tr>
+            <tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Election Details</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.MonthOfAnnualElection}<br/>Term: {(dto.ExecutiveCommittee.DateOfElection?.ToString("MM/dd/yyyy") ?? "N/A")} to {(dto.ExecutiveCommittee.DateOfTermEnding?.ToString("MM/dd/yyyy") ?? "N/A")}</td></tr>
+        </table>
+");
+
+        void RenderMember(string role, CommitteeMemberDto m)
         {
-            PlainText = $"Hello,\n\nYour registration request for {associationName} has been successfully received.\n\nThank you.",
-            Html = $"<p>Hello,</p><p>Your registration request for <b>{associationName}</b> has been successfully received.</p><p>Thank you.</p>"
+            if (!string.IsNullOrEmpty(m.Name))
+                htmlBuilder.Append($"<tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>{role}</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{m.Name}<br/><span style='font-size: 12px; color: #666;'>{m.Telephone} | {m.Email}</span></td></tr>");
+        }
+
+        htmlBuilder.Append(@"
+        <h3 style='border-bottom: 2px solid #2b3a55; padding-bottom: 5px; color: #2b3a55; margin-top: 30px;'>Executive Committee</h3>
+        <table style='width: 100%; border-collapse: collapse; margin-bottom: 20px;'>
+");
+        RenderMember("President", dto.ExecutiveCommittee.President);
+        RenderMember("Secretary", dto.ExecutiveCommittee.Secretary);
+        RenderMember("Treasurer", dto.ExecutiveCommittee.Treasurer);
+        RenderMember("Member 1", dto.ExecutiveCommittee.CommitteeMember1);
+        RenderMember("Member 2", dto.ExecutiveCommittee.CommitteeMember2);
+        RenderMember("Member 3", dto.ExecutiveCommittee.CommitteeMember3);
+        RenderMember("Member 4", dto.ExecutiveCommittee.CommitteeMember4);
+        RenderMember("Member 5", dto.ExecutiveCommittee.CommitteeMember5);
+
+        htmlBuilder.Append(@"
+        </table>
+        
+        <h3 style='border-bottom: 2px solid #2b3a55; padding-bottom: 5px; color: #2b3a55; margin-top: 30px;'>Board & Representatives</h3>
+        <table style='width: 100%; border-collapse: collapse; margin-bottom: 20px;'>
+");
+        if (!string.IsNullOrEmpty(dto.BoardOfDirectors.CurrentPresident.Name))
+            htmlBuilder.Append($"<tr><td style='padding: 8px; border-bottom: 1px solid #ddd; width: 40%;'><b>Current President</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.BoardOfDirectors.CurrentPresident.Name}</td></tr>");
+        if (!string.IsNullOrEmpty(dto.BoardOfDirectors.PastPresident.Name))
+            htmlBuilder.Append($"<tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Past President</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.BoardOfDirectors.PastPresident.Name}</td></tr>");
+        if (!string.IsNullOrEmpty(dto.BoardOfDirectors.PastSecretary.Name))
+            htmlBuilder.Append($"<tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Past Secretary</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.BoardOfDirectors.PastSecretary.Name}</td></tr>");
+        if (!string.IsNullOrEmpty(dto.BoardOfDirectors.PastTreasurer.Name))
+            htmlBuilder.Append($"<tr><td style='padding: 8px; border-bottom: 1px solid #ddd;'><b>Past Treasurer</b></td><td style='padding: 8px; border-bottom: 1px solid #ddd;'>{dto.BoardOfDirectors.PastTreasurer.Name}</td></tr>");
+
+        htmlBuilder.Append(@"
+        </table>
+        
+        <h3 style='border-bottom: 2px solid #2b3a55; padding-bottom: 5px; color: #2b3a55; margin-top: 30px;'>Attached Documents</h3>
+        <ul>
+");
+        foreach (var doc in dto.Documents)
+        {
+            htmlBuilder.Append($"<li>{doc.Type}: {doc.Name}</li>");
+        }
+        if (dto.Documents.Count == 0)
+            htmlBuilder.Append("<li>None</li>");
+
+        htmlBuilder.Append($@"
+        </ul>
+        
+        <p style='margin-top: 30px; font-size: 14px; color: #666; text-align: center;'>This is an automated message. Please do not reply directly to this email.</p>
+    </div>
+</div>
+");
+
+        var emailClient = new EmailClient(connectionString);
+        var content = new EmailContent($"Registration Received - {dto.AssociationName}")
+        {
+            PlainText = $"Hello,\n\nYour registration request for {dto.AssociationName} has been successfully received.\n\nThank you.",
+            Html = htmlBuilder.ToString()
         };
         
-        var recipients = new EmailRecipients(new List<EmailAddress> { new EmailAddress(contactEmail) });
+        var recipients = new EmailRecipients(new List<EmailAddress> { new EmailAddress(dto.ContactEmail) });
         
         if (!string.IsNullOrEmpty(adminRecipients))
         {
