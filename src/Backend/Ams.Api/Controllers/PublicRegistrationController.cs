@@ -1,8 +1,10 @@
 using Ams.Domain.Entities;
 using Ams.Domain.Enums;
 using Ams.Infrastructure.Persistence;
+using Azure.Communication.Email;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace Ams.Api.Controllers;
 
@@ -11,10 +13,12 @@ namespace Ams.Api.Controllers;
 public class PublicRegistrationController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
+    private readonly IConfiguration _configuration;
 
-    public PublicRegistrationController(ApplicationDbContext context)
+    public PublicRegistrationController(ApplicationDbContext context, IConfiguration configuration)
     {
         _context = context;
+        _configuration = configuration;
     }
 
     [HttpPut("/api/public/invitations/{id}/click")]
@@ -53,29 +57,39 @@ public class PublicRegistrationController : ControllerBase
         };
 
         _context.AssociationRequests.Add(request);
-        await _context.SaveChangesAsync();
 
         if (dto.IsDraft)
         {
+            await _context.SaveChangesAsync();
             return Ok(new { Message = "Draft saved successfully.", RequestId = request.Id });
         }
 
-        // In a real app, we would send an acknowledgment email via Azure Service Bus here.
-
-        if (!dto.IsDraft && dto.InviteId.HasValue)
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        try
         {
-            var invite = await _context.TenantInvitations.FindAsync(dto.InviteId.Value);
-            if (invite != null)
-            {
-                invite.Status = "Accepted";
-                invite.AcceptedUtc = DateTime.UtcNow;
-                // If the tenant isn't created yet, we can't link it. Wait, the association request isn't a tenant yet. 
-                // But we know they accepted.
-                await _context.SaveChangesAsync();
-            }
-        }
+            await _context.SaveChangesAsync();
 
-        return Ok(new { Message = "Request submitted successfully. You will receive an email shortly.", RequestId = request.Id, TenantId = request.TenantUniqueId });
+            if (dto.InviteId.HasValue)
+            {
+                var invite = await _context.TenantInvitations.FindAsync(dto.InviteId.Value);
+                if (invite != null)
+                {
+                    invite.Status = "Accepted";
+                    invite.AcceptedUtc = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            await SendConfirmationEmailAsync(dto.ContactEmail, dto.AssociationName);
+
+            await transaction.CommitAsync();
+            return Ok(new { Message = "Request submitted successfully. You will receive an email shortly.", RequestId = request.Id, TenantId = request.TenantUniqueId });
+        }
+        catch (Exception)
+        {
+            await transaction.RollbackAsync();
+            return StatusCode(500, new { Message = "Failed to send confirmation email. Your submission was not completed. Please try again." });
+        }
     }
 
     [HttpPut("{id:guid}")]
@@ -93,14 +107,102 @@ public class PublicRegistrationController : ControllerBase
             request.TenantUniqueId = dto.ParentTenantId ?? GenerateTenantId();
         }
 
-        await _context.SaveChangesAsync();
-
         if (dto.IsDraft)
         {
+            await _context.SaveChangesAsync();
             return Ok(new { Message = "Draft updated successfully.", RequestId = request.Id });
         }
 
-        return Ok(new { Message = "Request submitted successfully. You will receive an email shortly.", RequestId = request.Id, TenantId = request.TenantUniqueId });
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        try
+        {
+            await _context.SaveChangesAsync();
+
+            await SendConfirmationEmailAsync(dto.ContactEmail, dto.AssociationName);
+
+            await transaction.CommitAsync();
+            return Ok(new { Message = "Request submitted successfully. You will receive an email shortly.", RequestId = request.Id, TenantId = request.TenantUniqueId });
+        }
+        catch (Exception)
+        {
+            await transaction.RollbackAsync();
+            return StatusCode(500, new { Message = "Failed to send confirmation email. Your submission was not completed. Please try again." });
+        }
+    }
+
+    private async Task SendConfirmationEmailAsync(string contactEmail, string associationName)
+    {
+        var connectionString = _configuration["AzureEmail:ConnectionString"];
+        var senderAddress = _configuration["AzureEmail:SenderAddress"];
+        var adminRecipients = _configuration["AzureEmail:AdminRecipients"];
+        
+        if (string.IsNullOrEmpty(connectionString) || string.IsNullOrEmpty(senderAddress))
+        {
+            throw new Exception("Email configuration is missing.");
+        }
+
+        var emailClient = new EmailClient(connectionString);
+        var content = new EmailContent("Registration Received")
+        {
+            PlainText = $"Hello,\n\nYour registration request for {associationName} has been successfully received.\n\nThank you.",
+            Html = $"<p>Hello,</p><p>Your registration request for <b>{associationName}</b> has been successfully received.</p><p>Thank you.</p>"
+        };
+        
+        var recipients = new EmailRecipients(new List<EmailAddress> { new EmailAddress(contactEmail) });
+        
+        if (!string.IsNullOrEmpty(adminRecipients))
+        {
+            var adminEmails = adminRecipients.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var adminEmail in adminEmails)
+            {
+                recipients.BCC.Add(new EmailAddress(adminEmail.Trim()));
+            }
+        }
+
+        var message = new EmailMessage(senderAddress, recipients, content);
+        
+        await emailClient.SendAsync(Azure.WaitUntil.Completed, message);
+    }
+
+    [HttpPost("upload")]
+    public async Task<IActionResult> UploadDocument(IFormFile file)
+    {
+        if (file == null || file.Length == 0) return BadRequest("No file uploaded.");
+
+        var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "App_Data", "uploads");
+        if (!Directory.Exists(uploadsFolder))
+        {
+            Directory.CreateDirectory(uploadsFolder);
+        }
+
+        var uniqueFileName = $"{Guid.NewGuid()}_{file.FileName}";
+        var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        return Ok(new { Path = uniqueFileName, Name = file.FileName });
+    }
+
+    [HttpDelete("upload/{fileName}")]
+    public IActionResult DeleteDocument(string fileName)
+    {
+        var filePath = Path.Combine(Directory.GetCurrentDirectory(), "App_Data", "uploads", fileName);
+        if (System.IO.File.Exists(filePath))
+        {
+            System.IO.File.Delete(filePath);
+        }
+        return Ok();
+    }
+
+    [HttpGet("document/{fileName}")]
+    public IActionResult GetDocument(string fileName)
+    {
+        var filePath = Path.Combine(Directory.GetCurrentDirectory(), "App_Data", "uploads", fileName);
+        if (!System.IO.File.Exists(filePath)) return NotFound();
+        return PhysicalFile(filePath, "application/octet-stream", fileName);
     }
 
     private string GenerateTenantId()
@@ -144,6 +246,15 @@ public class AssociationRequestDto
     
     // Part: Board of Directors and Representatives
     public BoardOfDirectorsDto BoardOfDirectors { get; set; } = new();
+
+    public List<DocumentDto> Documents { get; set; } = new();
+}
+
+public class DocumentDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
 }
 
 public class ExecutiveCommitteeDto

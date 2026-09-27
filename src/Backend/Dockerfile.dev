@@ -8,7 +8,9 @@ COPY ["Ams.Domain/Ams.Domain.csproj", "Ams.Domain/"]
 COPY ["Ams.Infrastructure/Ams.Infrastructure.csproj", "Ams.Infrastructure/"]
 RUN dotnet restore "Ams.Api/Ams.Api.csproj"
 
-# The rest of the source code will be synced via Docker Compose Watch
+# Copy everything else
+COPY . .
+
 WORKDIR /app/Ams.Api
 # Use dotnet watch for hot reloading
 CMD ["dotnet", "watch", "run", "--urls", "http://0.0.0.0:8080"]

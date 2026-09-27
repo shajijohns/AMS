@@ -40,7 +40,25 @@ const RenderFields: React.FC<{ data: any, prefix?: string }> = ({ data, prefix =
 
         // Render simple key-value pairs
         let displayValue: React.ReactNode = '-';
-        if (value !== null && value !== undefined && value !== '') {
+        // Handle arrays of documents specifically
+        if (Array.isArray(value)) {
+          if (value.length > 0 && typeof value[0] === 'object' && value[0].path) {
+            displayValue = (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {value.map((doc: any, i: number) => (
+                  <Box key={i} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                    <Typography variant="body2">{doc.type}:</Typography>
+                    <a href={`/api/public/association-requests/document/${doc.path}`} target="_blank" rel="noopener noreferrer">
+                      {doc.name}
+                    </a>
+                  </Box>
+                ))}
+              </Box>
+            );
+          } else {
+            displayValue = JSON.stringify(value);
+          }
+        } else if (value !== null && value !== undefined && value !== '') {
           const strValue = String(value).trim();
           const isImage = strValue.startsWith('data:image/');
           const isSignature = key.toLowerCase().includes('signature') && strValue.length > 100;

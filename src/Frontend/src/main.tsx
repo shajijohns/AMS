@@ -5,6 +5,11 @@ import { theme } from './theme.ts'
 import App from './App.tsx'
 import './index.css'
 
+import { setupGlobalErrorLogging } from './utils/logger.ts';
+
+// Initialize global frontend error logging
+setupGlobalErrorLogging();
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider theme={theme}>

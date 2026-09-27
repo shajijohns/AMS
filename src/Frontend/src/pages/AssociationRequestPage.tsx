@@ -53,8 +53,8 @@ const execSchema = z.object({
   president: requiredCommitteeMemberSchema,
   secretary: requiredCommitteeMemberSchema,
   treasurer: requiredCommitteeMemberSchema,
-  committeeMember1: requiredCommitteeMemberSchema,
-  committeeMember2: requiredCommitteeMemberSchema,
+  committeeMember1: committeeMemberSchema,
+  committeeMember2: committeeMemberSchema,
   committeeMember3: committeeMemberSchema,
   committeeMember4: committeeMemberSchema,
   committeeMember5: committeeMemberSchema,
@@ -119,30 +119,7 @@ const emptyFormState = {
   }
 };
 
-const GOOGLE_MAPS_API_KEY = "AIzaSyBAmIfMdRKKpctLdYdi7EZyK0GlSnkJ2hs";
-
-const loadGoogleMapsScript = (callback: () => void) => {
-  if (typeof (window as any).google === 'object' && typeof (window as any).google.maps === 'object') {
-    callback();
-    return;
-  }
-  const existingScript = document.getElementById('googleMapsScript');
-  if (!existingScript) {
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places`;
-    script.id = 'googleMapsScript';
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
-    script.onload = () => {
-      if (callback) callback();
-    };
-  } else {
-    existingScript.addEventListener('load', () => {
-      if (callback) callback();
-    });
-  }
-};
+const GEOAPIFY_API_KEY = "6cca4ace5b7240cc93231a3c0a3889c4";
 
 export const AssociationRequestPage: React.FC = () => {
   const [activeStep, setActiveStep] = useState(0);
@@ -153,21 +130,34 @@ export const AssociationRequestPage: React.FC = () => {
 
   const [addressOptions, setAddressOptions] = useState<any[]>([]);
   const [addressInputValue, setAddressInputValue] = useState('');
-  const [autocompleteService, setAutocompleteService] = useState<any>(null);
-  const [geocoderService, setGeocoderService] = useState<any>(null);
 
-  const [uploadedDocs, setUploadedDocs] = useState<{ name: string; type: string; file: File }[]>([]);
+
+  const [uploadedDocs, setUploadedDocs] = useState<{ name: string; type: string; path: string }[]>([]);
   const [docType, setDocType] = useState('Registration Certificate');
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
 
-  const handleFileUpload = () => {
+  const handleFileUpload = async () => {
     if (selectedFiles && docType) {
-      const newDocs = Array.from(selectedFiles).map(file => ({
-        name: file.name,
-        type: docType,
-        file: file
-      }));
-      setUploadedDocs(prev => [...prev, ...newDocs]);
+      const filesArray = Array.from(selectedFiles);
+      for (const file of filesArray) {
+        const formData = new window.FormData();
+        formData.append('file', file);
+        try {
+          const response = await fetch('/api/public/association-requests/upload', {
+            method: 'POST',
+            body: formData
+          });
+          if (response.ok) {
+            const result = await response.json();
+            setUploadedDocs(prev => [...prev, { name: file.name, type: docType, path: result.path }]);
+          } else {
+            alert(`Failed to upload ${file.name}`);
+          }
+        } catch (e) {
+          console.error(e);
+          alert(`Network error uploading ${file.name}`);
+        }
+      }
       setSelectedFiles(null);
     }
   };
@@ -199,30 +189,27 @@ export const AssociationRequestPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    loadGoogleMapsScript(() => {
-      setAutocompleteService(new (window as any).google.maps.places.AutocompleteService());
-      setGeocoderService(new (window as any).google.maps.Geocoder());
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!addressInputValue || addressInputValue.length < 3 || !autocompleteService) {
+    if (!addressInputValue || addressInputValue.length < 3) {
       setAddressOptions([]);
       return;
     }
 
-    const timer = setTimeout(() => {
-      autocompleteService.getPlacePredictions({ input: addressInputValue }, (predictions: any, status: any) => {
-        if (status === (window as any).google.maps.places.PlacesServiceStatus.OK && predictions) {
-          setAddressOptions(predictions);
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(`https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(addressInputValue)}&apiKey=${GEOAPIFY_API_KEY}`);
+        if (response.ok) {
+          const data = await response.json();
+          setAddressOptions(data.features || []);
         } else {
           setAddressOptions([]);
         }
-      });
+      } catch (e) {
+        setAddressOptions([]);
+      }
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [addressInputValue, autocompleteService]);
+  }, [addressInputValue]);
 
   const getSavedDraft = () => {
     try {
@@ -315,6 +302,7 @@ export const AssociationRequestPage: React.FC = () => {
         PastSecretary: data.board.pastSecretary,
         PastTreasurer: data.board.pastTreasurer
       },
+      Documents: uploadedDocs.map(d => ({ name: d.name, type: d.type, path: d.path })),
       InviteId: localStorage.getItem('associationInviteId')
     };
   };
@@ -551,7 +539,14 @@ export const AssociationRequestPage: React.FC = () => {
           </Alert>
         </Snackbar>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form 
+          onSubmit={handleSubmit(onSubmit)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+            }
+          }}
+        >
           {/* Step 1 */}
           {activeStep === 0 && (
           <Box>
@@ -563,52 +558,34 @@ export const AssociationRequestPage: React.FC = () => {
                   <Autocomplete
                     freeSolo
                     options={addressOptions}
-                    getOptionLabel={(option) => typeof option === 'string' ? option : option.description}
+                    getOptionLabel={(option) => typeof option === 'string' ? option : option.properties?.formatted || ''}
                     filterOptions={(x) => x} // Disable built-in filtering since we do server-side
                     value={field.value}
                     onChange={(_, newValue) => {
                       if (typeof newValue === 'string') {
                         field.onChange(newValue);
-                      } else if (newValue && newValue.description) {
-                        field.onChange(newValue.description);
-                        
-                        if (geocoderService && newValue.place_id) {
-                          geocoderService.geocode({ placeId: newValue.place_id }, (results: any, status: any) => {
-                            if (status === 'OK' && results[0]) {
-                              const addressComponents = results[0].address_components;
-                              let streetNumber = '';
-                              let route = '';
-                              let city = '';
-                              let state = '';
-                              let zip = '';
-                              let country = '';
+                      } else if (newValue && newValue.properties) {
+                        const p = newValue.properties;
+                        const streetAddress = p.address_line1 || '';
+                        const city = p.city || p.county || '';
+                        const state = p.state || '';
+                        const zip = p.postcode || '';
+                        const country = p.country || '';
 
-                              for (const component of addressComponents) {
-                                const types = component.types;
-                                if (types.includes('street_number')) streetNumber = component.long_name;
-                                if (types.includes('route')) route = component.long_name;
-                                if (types.includes('locality') || types.includes('postal_town') || types.includes('sublocality_level_1')) city = component.long_name;
-                                if (types.includes('administrative_area_level_1')) state = component.long_name;
-                                if (types.includes('postal_code')) zip = component.long_name;
-                                if (types.includes('country')) country = component.long_name;
-                              }
+                        if (streetAddress) {
+                          field.onChange(streetAddress);
+                        } else if (p.formatted) {
+                          field.onChange(p.formatted);
+                        }
 
-                              const streetAddress = `${streetNumber} ${route}`.trim();
-                              if (streetAddress) {
-                                field.onChange(streetAddress);
-                              }
-
-                              if (city) setValue('org.city', city, { shouldValidate: true, shouldDirty: true });
-                              if (state) setValue('org.state', state, { shouldValidate: true, shouldDirty: true });
-                              if (zip) setValue('org.zip', zip, { shouldValidate: true, shouldDirty: true });
-                              if (country) {
-                                 const matchedCountry = flatCountries.find(c => c.name.toLowerCase() === country.toLowerCase() || c.code.toLowerCase() === country.toLowerCase());
-                                 if (matchedCountry) {
-                                   setValue('org.country', matchedCountry.name, { shouldValidate: true, shouldDirty: true });
-                                 }
-                              }
-                            }
-                          });
+                        if (city) setValue('org.city', city, { shouldValidate: true, shouldDirty: true });
+                        if (state) setValue('org.state', state, { shouldValidate: true, shouldDirty: true });
+                        if (zip) setValue('org.zip', zip, { shouldValidate: true, shouldDirty: true });
+                        if (country) {
+                           const matchedCountry = flatCountries.find(c => c.name.toLowerCase() === country.toLowerCase() || c.code.toLowerCase() === country.toLowerCase());
+                           if (matchedCountry) {
+                             setValue('org.country', matchedCountry.name, { shouldValidate: true, shouldDirty: true });
+                           }
                         }
                       } else {
                         field.onChange('');
@@ -818,7 +795,12 @@ export const AssociationRequestPage: React.FC = () => {
                     <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1, border: '1px solid', borderColor: 'divider' }}>
                       <Typography variant="subtitle2" noWrap title={doc.name}>{doc.name}</Typography>
                       <Typography variant="body2" color="text.secondary">{doc.type}</Typography>
-                      <Button size="small" color="error" onClick={() => setUploadedDocs(docs => docs.filter((_, i) => i !== idx))} sx={{ alignSelf: 'flex-start' }}>Remove</Button>
+                      <Button size="small" color="error" onClick={async () => {
+                        try {
+                          await fetch(`/api/public/association-requests/upload/${doc.path}`, { method: 'DELETE' });
+                        } catch(e) {}
+                        setUploadedDocs(docs => docs.filter((_, i) => i !== idx));
+                      }} sx={{ alignSelf: 'flex-start' }}>Remove</Button>
                     </Paper>
                   </Grid>
                 ))}
@@ -839,7 +821,7 @@ export const AssociationRequestPage: React.FC = () => {
                   <MenuItem value="Other">Other</MenuItem>
                 </Select>
               </FormControl>
-              <Button variant="outlined" component="label">
+              <Button type="button" variant="outlined" component="label">
                 Select Files
                 <input type="file" hidden multiple onChange={(e) => setSelectedFiles(e.target.files)} />
               </Button>
@@ -871,11 +853,11 @@ export const AssociationRequestPage: React.FC = () => {
                 Back
               </Button>
               {activeStep === steps.length - 1 ? (
-                <Button type="submit" variant="contained" color="primary">
+                <Button key="submit-btn" type="submit" variant="contained" color="primary">
                   Submit Application
                 </Button>
               ) : (
-                <Button type="button" onClick={handleNext} variant="contained" color="primary">
+                <Button key="next-btn" type="button" onClick={handleNext} variant="contained" color="primary">
                   Next
                 </Button>
               )}

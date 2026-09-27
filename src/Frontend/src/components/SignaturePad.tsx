@@ -61,7 +61,7 @@ export const SignaturePad = ({ label, onChange, value, error, helperText }: Sign
         />
       </Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Button size="small" onClick={handleClear} sx={{ mt: 1, textTransform: 'none' }}>
+        <Button type="button" size="small" onClick={handleClear} sx={{ mt: 1, textTransform: 'none' }}>
           Clear Signature
         </Button>
         {helperText && (

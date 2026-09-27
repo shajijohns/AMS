@@ -21,187 +21,208 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.File("/app/logs/log.txt", rollingInterval: RollingInterval.Day)
+    .WriteTo.MSSqlServer(
+        connectionString: builder.Configuration.GetConnectionString("DefaultConnection"),
+        sinkOptions: new Serilog.Sinks.MSSqlServer.MSSqlServerSinkOptions 
+        { 
+            TableName = "ApplicationLogs", 
+            AutoCreateSqlTable = true,
+            BatchPostingLimit = 1
+        })
     .CreateLogger();
 
-builder.Host.UseSerilog();
-
-// Configure DataProtection to persist keys across Docker restarts
-builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"));
-
-builder.Services.AddOpenApi(options =>
+try
 {
-    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    Log.Information("Starting web application");
+    builder.Host.UseSerilog();
+
+    // Configure DataProtection to persist keys across Docker restarts
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"));
+
+    builder.Services.AddOpenApi(options =>
     {
-        document.Components ??= new OpenApiComponents();
-        document.Components.SecuritySchemes.Add("cookieAuth", new OpenApiSecurityScheme
+        options.AddDocumentTransformer((document, context, cancellationToken) =>
         {
-            Type = SecuritySchemeType.ApiKey,
-            In = ParameterLocation.Cookie,
-            Name = ".AspNetCore.Identity.Application",
-            Description = "Cookie authentication. Note: You must first authenticate using the frontend or the /api/auth/login endpoint before testing protected endpoints here."
-        });
-        document.SecurityRequirements.Add(new OpenApiSecurityRequirement
-        {
+            document.Components ??= new OpenApiComponents();
+            document.Components.SecuritySchemes.Add("cookieAuth", new OpenApiSecurityScheme
             {
-                new OpenApiSecurityScheme
+                Type = SecuritySchemeType.ApiKey,
+                In = ParameterLocation.Cookie,
+                Name = ".AspNetCore.Identity.Application",
+                Description = "Cookie authentication. Note: You must first authenticate using the frontend or the /api/auth/login endpoint before testing protected endpoints here."
+            });
+            document.SecurityRequirements.Add(new OpenApiSecurityRequirement
+            {
                 {
-                    Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "cookieAuth" }
-                },
-                Array.Empty<string>()
-            }
+                    new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "cookieAuth" }
+                    },
+                    Array.Empty<string>()
+                }
+            });
+            return Task.CompletedTask;
         });
-        return Task.CompletedTask;
     });
-});
-builder.Services.AddControllers();
+    builder.Services.AddControllers();
 
-// Add multitenancy and generic services
-builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<ITenantProvider, DummyTenantProvider>();
-builder.Services.AddScoped<IPaymentGatewayService, PaymentGatewayService>();
+    // Add multitenancy and generic services
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<ITenantProvider, DummyTenantProvider>();
+    builder.Services.AddScoped<IPaymentGatewayService, PaymentGatewayService>();
 
-// Register Interceptors
-builder.Services.AddScoped<AuditInterceptor>();
+    // Register Interceptors
+    builder.Services.AddScoped<AuditInterceptor>();
 
-// Add SignalR and Services
-builder.Services.AddSignalR();
-builder.Services.AddScoped<IMapDataService, MapDataService>();
+    // Add SignalR and Services
+    builder.Services.AddSignalR();
+    builder.Services.AddScoped<IMapDataService, MapDataService>();
 
-// Configure Entity Framework and SQL Server
-builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
-{
-    var auditInterceptor = sp.GetRequiredService<AuditInterceptor>();
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
-           .AddInterceptors(auditInterceptor);
-});
-
-// Configure Identity
-builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>()
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddDefaultTokenProviders();
-
-// Enable CORS for frontend
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowFrontend", policy =>
+    // Configure Entity Framework and SQL Server
+    builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
     {
-        policy.WithOrigins(
-                "http://localhost:5173",
-                "https://federationapps-web.mangostone-9f65fdbe.eastus.azurecontainerapps.io"
-              )
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        var auditInterceptor = sp.GetRequiredService<AuditInterceptor>();
+        options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
+               .AddInterceptors(auditInterceptor);
     });
-});
 
-builder.Services.ConfigureApplicationCookie(options =>
-{
-    options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.HttpOnly = true;
-    options.Events.OnRedirectToLogin = context =>
+    // Configure Identity
+    builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>()
+        .AddEntityFrameworkStores<ApplicationDbContext>()
+        .AddDefaultTokenProviders();
+
+    // Enable CORS for frontend
+    builder.Services.AddCors(options =>
     {
-        if (context.Request.Path.StartsWithSegments("/api"))
+        options.AddPolicy("AllowFrontend", policy =>
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        }
-        else
-        {
-            context.Response.Redirect(context.RedirectUri);
-        }
-        return Task.CompletedTask;
-    };
-});
-
-var app = builder.Build();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.MapScalarApiReference(options =>
-    {
-        options.WithTitle("Ams API");
+            policy.WithOrigins(
+                    "http://localhost:5173",
+                    "https://federationapps-web.mangostone-9f65fdbe.eastus.azurecontainerapps.io"
+                  )
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        });
     });
-}
 
-app.UseHttpsRedirection();
-app.UseCors("AllowFrontend");
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapControllers();
-app.MapHub<MapHub>("/api/hubs/map");
-
-// Seed master user
-using (var scope = app.Services.CreateScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-    // Retry logic for applying migrations (useful for Docker when DB is starting up)
-    int retries = 5;
-    while (retries > 0)
+    builder.Services.ConfigureApplicationCookie(options =>
     {
-        try
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.HttpOnly = true;
+        options.Events.OnRedirectToLogin = context =>
         {
-            await dbContext.Database.MigrateAsync();
-            break;
-        }
-        catch
-        {
-            retries--;
-            if (retries == 0) throw;
-            await Task.Delay(3000);
-        }
-    }
-    
-    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-    var user = await userManager.FindByNameAsync("shajijohn");
-    if (user == null)
-    {
-        user = new ApplicationUser 
-        { 
-            UserName = "shajijohn", 
-            Email = "shajijohn@admin.local",
-            FirstName = "Shaji",
-            LastName = "John"
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            }
+            else
+            {
+                context.Response.Redirect(context.RedirectUri);
+            }
+            return Task.CompletedTask;
         };
-        await userManager.CreateAsync(user, "Sh@ji2000$");
-    }
+    });
 
-    // Ensure FOKANA Master Tenant exists
-    var fokanaTenant = await dbContext.Tenants.FirstOrDefaultAsync(t => t.LegalName == "Federation of Kerala Associations in North America");
-    if (fokanaTenant == null)
+    var app = builder.Build();
+
+    // Configure the HTTP request pipeline.
+    if (app.Environment.IsDevelopment())
     {
-        fokanaTenant = new Tenant
+        app.MapOpenApi();
+        app.MapScalarApiReference(options =>
         {
-            LegalName = "Federation of Kerala Associations in North America",
-            DisplayName = "FOKANA",
-            Type = "Federation",
-            Status = "Active"
-        };
-        dbContext.Tenants.Add(fokanaTenant);
-        await dbContext.SaveChangesAsync();
+            options.WithTitle("Ams API");
+        });
     }
 
-    var requestsWithoutTenantId = await dbContext.AssociationRequests
-        .Where(r => string.IsNullOrEmpty(r.TenantUniqueId) && r.Status != RequestStatus.Draft)
-        .ToListAsync();
+    app.UseHttpsRedirection();
+    app.UseCors("AllowFrontend");
+    app.UseAuthentication();
+    app.UseAuthorization();
+    app.MapControllers();
+    app.MapHub<MapHub>("/api/hubs/map");
 
-    if (requestsWithoutTenantId.Any())
+    // Seed master user
+    using (var scope = app.Services.CreateScope())
     {
-        var random = new Random();
-        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        // Retry logic for applying migrations (useful for Docker when DB is starting up)
+        int retries = 5;
+        while (retries > 0)
+        {
+            try
+            {
+                await dbContext.Database.MigrateAsync();
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "An error occurred while migrating the database.");
+                retries--;
+                if (retries == 0) throw;
+                await Task.Delay(3000);
+            }
+        }
         
-        foreach (var req in requestsWithoutTenantId)
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await userManager.FindByNameAsync("shajijohn");
+        if (user == null)
         {
-            var idString = new string(Enumerable.Repeat(chars, 8).Select(s => s[random.Next(s.Length)]).ToArray());
-            req.TenantUniqueId = $"TENANT-{idString}";
+            user = new ApplicationUser 
+            { 
+                UserName = "shajijohn", 
+                Email = "shajijohn@admin.local",
+                FirstName = "Shaji",
+                LastName = "John"
+            };
+            await userManager.CreateAsync(user, "Sh@ji2000$");
         }
-        await dbContext.SaveChangesAsync();
-    }
-}
 
-app.Run();
+        // Ensure FOKANA Master Tenant exists
+        var fokanaTenant = await dbContext.Tenants.FirstOrDefaultAsync(t => t.LegalName == "Federation of Kerala Associations in North America");
+        if (fokanaTenant == null)
+        {
+            fokanaTenant = new Tenant
+            {
+                LegalName = "Federation of Kerala Associations in North America",
+                DisplayName = "FOKANA",
+                Type = "Federation",
+                Status = "Active"
+            };
+            dbContext.Tenants.Add(fokanaTenant);
+            await dbContext.SaveChangesAsync();
+        }
+
+        var requestsWithoutTenantId = await dbContext.AssociationRequests
+            .Where(r => string.IsNullOrEmpty(r.TenantUniqueId) && r.Status != RequestStatus.Draft)
+            .ToListAsync();
+
+        if (requestsWithoutTenantId.Any())
+        {
+            var random = new Random();
+            const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            
+            foreach (var req in requestsWithoutTenantId)
+            {
+                var idString = new string(Enumerable.Repeat(chars, 8).Select(s => s[random.Next(s.Length)]).ToArray());
+                req.TenantUniqueId = $"TENANT-{idString}";
+            }
+            await dbContext.SaveChangesAsync();
+        }
+    }
+
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
 
 // Dummy implementation for compilation
 public class DummyTenantProvider : ITenantProvider

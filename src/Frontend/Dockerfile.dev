@@ -5,5 +5,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Copy all other source files
+COPY . .
+
 # Source files will be synced here by Docker Compose Watch
 CMD ["npm", "run", "dev", "--", "--host"]
