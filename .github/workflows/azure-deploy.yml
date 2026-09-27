@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -12,36 +11,27 @@ permissions:
 
 env:
   # ============================================================
-  # AZURE
+  # AZURE SETTINGS
   # ============================================================
   AZURE_RESOURCE_GROUP: BBTGrp
 
-  # ============================================================
-  # AZURE CONTAINER REGISTRY
-  # ============================================================
-  ACR_LOGIN_SERVER: federationassocationapplication.azurecr.io
-
-  # ============================================================
-  # AZURE CONTAINER APPS
-  # ============================================================
+  # Azure Container Apps
   AZURE_CONTAINER_APP_NAME_BACKEND: federationapps-api
   AZURE_CONTAINER_APP_NAME_FRONTEND: federationapps-web
 
-  # ============================================================
-  # DOCKER IMAGE NAMES
-  # ============================================================
+  # Azure Container Registry
+  ACR_LOGIN_SERVER: federationassocationapplication.azurecr.io
+
+  # Docker image names
   BACKEND_IMAGE_NAME: memberregisteration-backend
   FRONTEND_IMAGE_NAME: memberregisteration-frontend
 
-  # ============================================================
-  # AZURE SQL
-  # ============================================================
+  # Azure SQL
   AZURE_SQL_SERVER: fedsql-sql1
 
-  # ============================================================
   # .NET
-  # ============================================================
   DOTNET_VERSION: "9.0.x"
+
 
 jobs:
 
@@ -51,25 +41,25 @@ jobs:
 
     steps:
 
-      # ========================================================
-      # 1. CHECKOUT
-      # ========================================================
+      # ============================================================
+      # 1. CHECKOUT REPOSITORY
+      # ============================================================
       - name: Checkout Repository
         uses: actions/checkout@v4
 
 
-      # ========================================================
+      # ============================================================
       # 2. LOGIN TO AZURE
-      # ========================================================
+      # ============================================================
       - name: Log in to Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 
-      # ========================================================
+      # ============================================================
       # 3. LOGIN TO AZURE CONTAINER REGISTRY
-      # ========================================================
+      # ============================================================
       - name: Log in to Azure Container Registry
         uses: docker/login-action@v3
         with:
@@ -78,9 +68,9 @@ jobs:
           password: ${{ secrets.ACR_PASSWORD }}
 
 
-      # ========================================================
-      # 4. BUILD BACKEND DOCKER IMAGE
-      # ========================================================
+      # ============================================================
+      # 4. BUILD BACKEND IMAGE
+      # ============================================================
       - name: Build Backend Image
         run: |
           docker build \
@@ -90,21 +80,18 @@ jobs:
             .
 
 
-      # ========================================================
+      # ============================================================
       # 5. PUSH BACKEND IMAGE
-      # ========================================================
+      # ============================================================
       - name: Push Backend Image
         run: |
-          docker push \
-            ${{ env.ACR_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
-
-          docker push \
-            ${{ env.ACR_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:latest
 
 
-      # ========================================================
-      # 6. BUILD FRONTEND DOCKER IMAGE
-      # ========================================================
+      # ============================================================
+      # 6. BUILD FRONTEND IMAGE
+      # ============================================================
       - name: Build Frontend Image
         run: |
           docker build \
@@ -114,38 +101,35 @@ jobs:
             src/Frontend
 
 
-      # ========================================================
+      # ============================================================
       # 7. PUSH FRONTEND IMAGE
-      # ========================================================
+      # ============================================================
       - name: Push Frontend Image
         run: |
-          docker push \
-            ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
-
-          docker push \
-            ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:latest
 
 
-      # ========================================================
-      # 8. INSTALL .NET 9
-      # ========================================================
+      # ============================================================
+      # 8. SETUP .NET 9
+      # ============================================================
       - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
 
-      # ========================================================
-      # 9. RESTORE BACKEND
-      # ========================================================
+      # ============================================================
+      # 9. RESTORE BACKEND PACKAGES
+      # ============================================================
       - name: Restore Backend NuGet Packages
         run: |
           dotnet restore src/Backend/Ams.Api/Ams.Api.csproj
 
 
-      # ========================================================
+      # ============================================================
       # 10. BUILD BACKEND
-      # ========================================================
+      # ============================================================
       - name: Build Backend
         run: |
           dotnet build \
@@ -154,21 +138,22 @@ jobs:
             --no-restore
 
 
-      # ========================================================
-      # 11. INSTALL EF CORE 9 CLI
-      #
-      # Keep EF CLI on the same major version as your
-      # .NET 9 / EF Core 9 application.
-      # ========================================================
+      # ============================================================
+      # 11. INSTALL EF CORE TOOLS
+      # ============================================================
       - name: Install EF Core Tools
         run: |
           dotnet tool install --global dotnet-ef --version "9.*"
           dotnet ef --version
 
 
-      # ========================================================
+      # ============================================================
       # 12. GET GITHUB RUNNER PUBLIC IP
-      # ========================================================
+      #
+      # GitHub-hosted runners use dynamic IP addresses.
+      # We determine the current runner IP and temporarily allow it
+      # through the Azure SQL firewall.
+      # ============================================================
       - name: Get GitHub Runner Public IP
         id: runner_ip
         shell: bash
@@ -176,19 +161,21 @@ jobs:
           RUNNER_IP=$(curl --fail --silent --show-error https://api.ipify.org)
 
           if [ -z "$RUNNER_IP" ]; then
-            echo "Unable to determine GitHub runner public IP."
+            echo "ERROR: Unable to determine GitHub runner public IP."
             exit 1
           fi
 
-          echo "GitHub runner IP detected."
+          echo "GitHub Runner IP: $RUNNER_IP"
           echo "ipv4=$RUNNER_IP" >> "$GITHUB_OUTPUT"
 
 
-      # ========================================================
-      # 13. TEMPORARILY ALLOW RUNNER THROUGH AZURE SQL FIREWALL
-      # ========================================================
+      # ============================================================
+      # 13. ADD GITHUB RUNNER TO AZURE SQL FIREWALL
+      # ============================================================
       - name: Add GitHub Runner to Azure SQL Firewall
         run: |
+          echo "Adding temporary SQL firewall rule..."
+
           az sql server firewall-rule create \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --server "${{ env.AZURE_SQL_SERVER }}" \
@@ -197,33 +184,30 @@ jobs:
             --end-ip-address "${{ steps.runner_ip.outputs.ipv4 }}"
 
 
-      # ========================================================
-      # 14. WAIT FOR AZURE SQL FIREWALL RULE
+      # ============================================================
+      # 14. WAIT FOR AZURE SQL FIREWALL
       #
-      # Gives Azure a few seconds to propagate the firewall rule.
-      # ========================================================
-      - name: Wait for SQL Firewall Rule
+      # Give Azure time to propagate the new firewall rule.
+      # ============================================================
+      - name: Wait for Azure SQL Firewall
         run: |
           echo "Waiting for Azure SQL firewall rule to propagate..."
-          sleep 15
+          sleep 20
 
 
-      # ========================================================
+      # ============================================================
       # 15. RUN EF CORE MIGRATIONS
       #
-      # SQL_CONNECTION_STRING should contain:
+      # SQL_CONNECTION_STRING comes from GitHub Actions Secrets.
       #
-      # Server=tcp:fedsql-sql1.database.windows.net,1433;
-      # Initial Catalog=AMS;
-      # Persist Security Info=False;
-      # User ID=shajjohn;
-      # Password=YOUR_PASSWORD;
-      # MultipleActiveResultSets=False;
-      # Encrypt=True;
-      # TrustServerCertificate=False;
-      # Connection Timeout=30;
+      # It should point to:
       #
-      # ========================================================
+      # Server:
+      # fedsql-sql1.database.windows.net
+      #
+      # Database:
+      # AMS
+      # ============================================================
       - name: Run EF Core Migrations
         run: |
           dotnet ef database update \
@@ -232,9 +216,27 @@ jobs:
             --connection "${{ secrets.SQL_CONNECTION_STRING }}"
 
 
-      # ========================================================
-      # 16. DEPLOY BACKEND
-      # ========================================================
+      # ============================================================
+      # 16. REMOVE TEMPORARY SQL FIREWALL RULE
+      #
+      # This executes even if EF migration fails.
+      # ============================================================
+      - name: Remove GitHub Runner SQL Firewall Rule
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "Removing temporary SQL firewall rule..."
+
+          az sql server firewall-rule delete \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --server "${{ env.AZURE_SQL_SERVER }}" \
+            --name "GitHubActions-${{ github.run_id }}" \
+            --yes
+
+
+      # ============================================================
+      # 17. DEPLOY BACKEND TO AZURE CONTAINER APPS
+      # ============================================================
       - name: Deploy Backend to Azure Container Apps
         run: |
           az containerapp update \
@@ -243,9 +245,9 @@ jobs:
             --image "${{ env.ACR_LOGIN_SERVER }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}"
 
 
-      # ========================================================
-      # 17. DEPLOY FRONTEND
-      # ========================================================
+      # ============================================================
+      # 18. DEPLOY FRONTEND TO AZURE CONTAINER APPS
+      # ============================================================
       - name: Deploy Frontend to Azure Container Apps
         run: |
           az containerapp update \
@@ -254,31 +256,14 @@ jobs:
             --image "${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}"
 
 
-      # ========================================================
-      # 18. REMOVE TEMPORARY SQL FIREWALL RULE
-      #
-      # IMPORTANT:
-      # if: always()
-      #
-      # This attempts cleanup even when migration/deployment fails.
-      # ========================================================
-      - name: Remove GitHub Runner SQL Firewall Rule
-        if: always() && steps.runner_ip.outputs.ipv4 != ''
-        continue-on-error: true
-        run: |
-          az sql server firewall-rule delete \
-            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-            --server "${{ env.AZURE_SQL_SERVER }}" \
-            --name "GitHubActions-${{ github.run_id }}" \
-            --yes
-
-
-      # ========================================================
-      # 19. SHOW DEPLOYMENT STATUS
-      # ========================================================
+      # ============================================================
+      # 19. SHOW BACKEND DEPLOYMENT STATUS
+      # ============================================================
       - name: Show Backend Container App Status
         if: success()
         run: |
+          echo "Backend deployment status:"
+
           az containerapp show \
             --name "${{ env.AZURE_CONTAINER_APP_NAME_BACKEND }}" \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
@@ -286,9 +271,14 @@ jobs:
             --output table
 
 
+      # ============================================================
+      # 20. SHOW FRONTEND DEPLOYMENT STATUS
+      # ============================================================
       - name: Show Frontend Container App Status
         if: success()
         run: |
+          echo "Frontend deployment status:"
+
           az containerapp show \
             --name "${{ env.AZURE_CONTAINER_APP_NAME_FRONTEND }}" \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
