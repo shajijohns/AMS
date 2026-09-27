@@ -1,0 +1,44 @@
+az ad sp list --display-name "github-associationportal-deploy" --query "[].{Name:displayName,AppId:appId}" -o table
+
+
+C:\Windows\System32>az ad sp list --display-name "github-associationportal-deploy" --query "[].{Name:displayName,AppId:appId}" -o table
+Name                             AppId
+-------------------------------  ------------------------------------
+github-associationportal-deploy  0cfa61ec-7e6e-4a32-bb4b-de4b6dcc5b1f
+
+C:\Windows\System32>az ad sp credential reset --id 0cfa61ec-7e6e-4a32-bb4b-de4b6dcc5b1f
+The output includes credentials that you must protect. Be sure that you do not include these credentials in your code or check the credentials into your source control. For more information, see https://aka.ms/azadsp-cli
+{
+  "appId": "0cfa61ec-7e6e-4a32-bb4b-de4b6dcc5b1f",
+  "password": "<MASKED_PASSWORD>",
+  "tenant": "366e38df-07c4-4593-b7c8-dd8573ded6e0"
+}
+AZURE_CREDENTIALS
+{
+  "clientId": "0cfa61ec-7e6e-4a32-bb4b-de4b6dcc5b1f",
+  "clientSecret": "<MASKED_SECRET>",
+  "subscriptionId": "699cf5b1-4243-4305-aa96-a37c7904eeb4",
+  "tenantId": "366e38df-07c4-4593-b7c8-dd8573ded6e0"
+}
+
+
+
+REGISTRY_LOGIN_SERVER  
+
+C:\Windows\System32>az acr list --resource-group BBTGrp --query "[].{Registry:name,LoginServer:loginServer}" -o table
+Registry                         LoginServer
+-------------------------------  ------------------------------------------
+federationassocationapplication  federationassocationapplication.azurecr.io
+
+
+REGISTRY_USERNAME
+C:\Windows\System32>az acr credential show --name federationassocationapplication --query username -o tsv
+federationassocationapplication
+
+
+REGISTRY_PASSWORD
+C:\Windows\System32>az acr credential show --name federationassocationapplication --query "passwords[0].value" -o tsv
+<MASKED_REGISTRY_PASSWORD>
+
+SQL_CONNECTION_STRING
+Server=tcp:federationassociation-sql1.database.windows.net,1433;Initial Catalog=AssociationManagementDB;Persist Security Info=False;User ID=shajijohn;Password=<MASKED_SQL_PASSWORD>;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;
